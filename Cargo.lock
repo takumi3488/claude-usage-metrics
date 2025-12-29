@@ -117,6 +117,7 @@ dependencies = [
  "prost",
  "tokio",
  "tonic",
+ "tonic-prost",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
