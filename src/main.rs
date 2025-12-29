@@ -39,7 +39,8 @@ async fn main() -> anyhow::Result<()> {
     let request = GetCookiesRequest {
         host: ".claude.ai".to_string(),
     };
-    let response: tonic::Response<proto::cookiejar::v1::GetCookiesResponse> = client.get_cookies(request).await?;
+    let response: tonic::Response<proto::cookiejar::v1::GetCookiesResponse> =
+        client.get_cookies(request).await?;
 
     dbg!(&response);
 
