@@ -10,5 +10,4 @@ runs:
       shell: bash
       run: |
         mkdir -p proto
-        buf dep update
         buf generate
