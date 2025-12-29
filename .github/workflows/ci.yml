@@ -14,9 +14,6 @@ jobs:
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Generate code from proto
-        uses: ./.github/actions/buf-generate
-
       - name: Run tests
         uses: takumi3488/mygha/rust/test@main
 
