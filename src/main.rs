@@ -1,4 +1,3 @@
-#[path = "../proto/mod.rs"]
 mod proto;
 
 use opentelemetry::trace::TracerProvider as _;
