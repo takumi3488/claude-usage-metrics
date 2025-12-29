@@ -4,7 +4,7 @@ runs:
   using: "composite"
   steps:
     - name: Set up Buf
-      uses: bufbuild/buf-action@v1
+      uses: bufbuild/buf-action@8f4a1456a0ab6a1eb80ba68e53832e6fcfacc16c # v1
 
     - name: Generate code from proto
       shell: bash
