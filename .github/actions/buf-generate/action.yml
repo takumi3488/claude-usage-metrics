@@ -1,0 +1,14 @@
+name: "Buf Generate"
+description: "Set up Buf and generate code from proto"
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Buf
+      uses: bufbuild/buf-setup-action@v1
+
+    - name: Generate code from proto
+      shell: bash
+      run: |
+        mkdir -p proto
+        buf dep update
+        buf generate
