@@ -1,0 +1,10 @@
+version: v2
+plugins:
+  - remote: buf.build/community/neoeinstein-prost:v0.4.0
+    out: proto
+  - remote: buf.build/community/neoeinstein-tonic:v0.4.1
+    out: proto
+    opt:
+      - no_server=false
+inputs:
+  - module: buf.build/cookiejar/reader

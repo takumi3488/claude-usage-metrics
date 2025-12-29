@@ -1,3 +1,6 @@
+#[path = "../proto/mod.rs"]
+mod proto;
+
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::SpanExporter;
 use opentelemetry_sdk::trace::SdkTracerProvider;
