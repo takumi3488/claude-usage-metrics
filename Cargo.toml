@@ -4,6 +4,7 @@ name = "claude-usage-metrics"
 version = "0.1.0"
 
 [dependencies]
+anyhow = "1.0.100"
 opentelemetry = { version = "0.31.0", default-features = false, features = [
   "trace",
 ] }
