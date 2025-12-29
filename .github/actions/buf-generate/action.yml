@@ -9,5 +9,5 @@ runs:
     - name: Generate code from proto
       shell: bash
       run: |
-        mkdir -p proto
+        mkdir -p src/proto
         buf generate
