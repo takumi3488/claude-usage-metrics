@@ -80,9 +80,10 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
         std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "claude-usage-metrics".to_string());
     let resource = Resource::builder().with_service_name(service_name).build();
 
-    // Create OTLP span exporter using gRPC (tonic)
     let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
         .unwrap_or_else(|_| "http://127.0.0.1:4317".to_string());
+
+    // Create OTLP span exporter using gRPC (tonic)
     let otlp_exporter = SpanExporter::builder()
         .with_tonic()
         .with_endpoint(&otlp_endpoint)
@@ -95,12 +96,10 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
         .with_resource(resource.clone())
         .build();
 
-    // Create metric exporter using gRPC (metrics endpoint)
-    let metrics_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-        .unwrap_or_else(|_| "http://127.0.0.1:4317".to_string());
+    // Create metric exporter using gRPC
     let metric_exporter = MetricExporter::builder()
         .with_tonic()
-        .with_endpoint(&metrics_endpoint)
+        .with_endpoint(&otlp_endpoint)
         .build()
         .context("Failed to create metric exporter")?;
 
