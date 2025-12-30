@@ -100,6 +100,7 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
     let metric_exporter = MetricExporter::builder()
         .with_tonic()
         .with_endpoint(&otlp_endpoint)
+        .with_timeout(std::time::Duration::from_secs(10))
         .build()
         .context("Failed to create metric exporter")?;
 
