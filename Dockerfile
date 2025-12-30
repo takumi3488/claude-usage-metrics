@@ -1,5 +1,5 @@
 # Chef stage: Install cargo-chef
-FROM lukemathwalker/cargo-chef:latest-rust-1.92-alpine AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.92-alpine@sha256:5a1e9cdd661f398f81646ae6f44c2663562ccefd3deeb74d06677b7e1dbfb730 AS chef
 
 WORKDIR /app
 
