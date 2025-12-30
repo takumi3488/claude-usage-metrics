@@ -1,14 +1,13 @@
 services:
   jaeger:
-    image: jaegertracing/jaeger:latest@sha256:d5e5fe1c2b2f663b07c28c6f7cc5a6e61aef076752dab8df8eeb6b0f5494c94b
+    image: jaegertracing/jaeger:2.4.0
+    restart: unless-stopped
     ports:
       - "16686:16686" # Jaeger UI
       - "4317:4317"   # OTLP gRPC
-    environment:
-      - COLLECTOR_OTLP_ENABLED=true
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
       start_period: 10s
