@@ -128,3 +128,179 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn test_empty_response_returns_empty_vec() {
+        let response = UsageResponse {
+            five_hour: None,
+            seven_day: None,
+            seven_day_oauth_apps: None,
+            seven_day_opus: None,
+            seven_day_sonnet: None,
+            iguana_necktie: None,
+            extra_usage: None,
+        };
+        let metrics: Vec<UsageMetric> = response.into();
+        assert!(metrics.is_empty());
+    }
+
+    #[test]
+    fn test_single_field_with_no_reset_time() {
+        let response = UsageResponse {
+            five_hour: Some(UsageInfo {
+                utilization: 0.5,
+                resets_at: None,
+            }),
+            seven_day: None,
+            seven_day_oauth_apps: None,
+            seven_day_opus: None,
+            seven_day_sonnet: None,
+            iguana_necktie: None,
+            extra_usage: None,
+        };
+        let metrics: Vec<UsageMetric> = response.into();
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(metrics[0].name, "five_hour");
+        assert_eq!(metrics[0].utilization, 0.5);
+        assert!(metrics[0].minutes_to_reset.is_none());
+    }
+
+    #[test]
+    fn test_single_field_with_future_reset_time() {
+        let future_time = Utc::now() + Duration::minutes(30);
+        let response = UsageResponse {
+            five_hour: Some(UsageInfo {
+                utilization: 0.75,
+                resets_at: Some(future_time.to_rfc3339()),
+            }),
+            seven_day: None,
+            seven_day_oauth_apps: None,
+            seven_day_opus: None,
+            seven_day_sonnet: None,
+            iguana_necktie: None,
+            extra_usage: None,
+        };
+        let metrics: Vec<UsageMetric> = response.into();
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(metrics[0].name, "five_hour");
+        assert_eq!(metrics[0].utilization, 0.75);
+        // Allow 1 minute margin for test execution time
+        let minutes = metrics[0].minutes_to_reset.unwrap();
+        assert!(minutes >= 29 && minutes <= 30);
+    }
+
+    #[test]
+    fn test_past_reset_time_returns_zero() {
+        let past_time = Utc::now() - Duration::minutes(10);
+        let response = UsageResponse {
+            five_hour: Some(UsageInfo {
+                utilization: 1.0,
+                resets_at: Some(past_time.to_rfc3339()),
+            }),
+            seven_day: None,
+            seven_day_oauth_apps: None,
+            seven_day_opus: None,
+            seven_day_sonnet: None,
+            iguana_necktie: None,
+            extra_usage: None,
+        };
+        let metrics: Vec<UsageMetric> = response.into();
+        assert_eq!(metrics[0].minutes_to_reset, Some(0));
+    }
+
+    #[test]
+    fn test_invalid_reset_time_format_returns_none() {
+        let response = UsageResponse {
+            five_hour: Some(UsageInfo {
+                utilization: 0.5,
+                resets_at: Some("invalid-date-format".to_string()),
+            }),
+            seven_day: None,
+            seven_day_oauth_apps: None,
+            seven_day_opus: None,
+            seven_day_sonnet: None,
+            iguana_necktie: None,
+            extra_usage: None,
+        };
+        let metrics: Vec<UsageMetric> = response.into();
+        assert_eq!(metrics.len(), 1);
+        assert!(metrics[0].minutes_to_reset.is_none());
+    }
+
+    #[test]
+    fn test_multiple_fields_preserves_order() {
+        let response = UsageResponse {
+            five_hour: Some(UsageInfo {
+                utilization: 0.1,
+                resets_at: None,
+            }),
+            seven_day: Some(UsageInfo {
+                utilization: 0.2,
+                resets_at: None,
+            }),
+            seven_day_oauth_apps: None,
+            seven_day_opus: Some(UsageInfo {
+                utilization: 0.3,
+                resets_at: None,
+            }),
+            seven_day_sonnet: None,
+            iguana_necktie: None,
+            extra_usage: Some(UsageInfo {
+                utilization: 0.4,
+                resets_at: None,
+            }),
+        };
+        let metrics: Vec<UsageMetric> = response.into();
+        assert_eq!(metrics.len(), 4);
+        assert_eq!(metrics[0].name, "five_hour");
+        assert_eq!(metrics[0].utilization, 0.1);
+        assert_eq!(metrics[1].name, "seven_day");
+        assert_eq!(metrics[1].utilization, 0.2);
+        assert_eq!(metrics[2].name, "seven_day_opus");
+        assert_eq!(metrics[2].utilization, 0.3);
+        assert_eq!(metrics[3].name, "extra_usage");
+        assert_eq!(metrics[3].utilization, 0.4);
+    }
+
+    #[test]
+    fn test_all_fields_present() {
+        let response = UsageResponse {
+            five_hour: Some(UsageInfo {
+                utilization: 0.1,
+                resets_at: None,
+            }),
+            seven_day: Some(UsageInfo {
+                utilization: 0.2,
+                resets_at: None,
+            }),
+            seven_day_oauth_apps: Some(UsageInfo {
+                utilization: 0.3,
+                resets_at: None,
+            }),
+            seven_day_opus: Some(UsageInfo {
+                utilization: 0.4,
+                resets_at: None,
+            }),
+            seven_day_sonnet: Some(UsageInfo {
+                utilization: 0.5,
+                resets_at: None,
+            }),
+            iguana_necktie: Some(UsageInfo {
+                utilization: 0.6,
+                resets_at: None,
+            }),
+            extra_usage: Some(UsageInfo {
+                utilization: 0.7,
+                resets_at: None,
+            }),
+        };
+        let metrics: Vec<UsageMetric> = response.into();
+        assert_eq!(metrics.len(), 7);
+    }
+}
