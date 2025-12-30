@@ -224,7 +224,7 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("Error shutting down meter provider: {:?}", e);
     }
 
-    Ok(())
+    result
 }
 
 #[cfg(test)]
