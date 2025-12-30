@@ -2,14 +2,12 @@ mod proto;
 
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use opentelemetry::trace::Status;
 use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::{MetricExporter, SpanExporter};
 use opentelemetry_sdk::{Resource, metrics::SdkMeterProvider, trace::SdkTracerProvider};
 use proto::cookiejar::v1::{GetCookiesRequest, cookie_service_client::CookieServiceClient};
 use serde::Deserialize;
-use tracing::{Span, error, info, instrument};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
+use tracing::{error, info, instrument};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, Deserialize)]
@@ -78,6 +76,10 @@ struct TelemetryProviders {
 }
 
 fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
+    let resource = Resource::builder()
+        .with_service_name("claude-usage-metrics")
+        .build();
+
     // Create OTLP span exporter
     let otlp_exporter = SpanExporter::builder()
         .with_tonic()
@@ -86,11 +88,7 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
 
     let tracer_provider = SdkTracerProvider::builder()
         .with_batch_exporter(otlp_exporter)
-        .with_resource(
-            Resource::builder()
-                .with_service_name("claude-usage-metrics")
-                .build(),
-        )
+        .with_resource(resource.clone())
         .build();
 
     // Create metric exporter
@@ -101,11 +99,7 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
 
     let meter_provider = SdkMeterProvider::builder()
         .with_periodic_exporter(metric_exporter)
-        .with_resource(
-            Resource::builder()
-                .with_service_name("claude-usage-metrics")
-                .build(),
-        )
+        .with_resource(resource)
         .build();
 
     global::set_meter_provider(meter_provider.clone());
@@ -212,19 +206,19 @@ async fn main() -> anyhow::Result<()> {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Failed to initialize telemetry: {:#}", e);
-            return Ok(());
+            return Err(e);
         }
     };
 
     // Phase 2: Run with tracing enabled (errors recorded as spans)
-    if let Err(e) = run().await {
+    let result = run().await;
+    if let Err(ref e) = result {
         error!(error = %e, "Application error");
-        Span::current().set_status(Status::error(e.to_string()));
     }
 
     // Phase 3: Shutdown providers (flush all spans and metrics)
-    if let Err(e) = providers.tracer_provider.force_flush() {
-        eprintln!("Error flushing tracer provider: {:?}", e);
+    if let Err(e) = providers.tracer_provider.shutdown() {
+        eprintln!("Error shutting down tracer provider: {:?}", e);
     }
     if let Err(e) = providers.meter_provider.shutdown() {
         eprintln!("Error shutting down meter provider: {:?}", e);
