@@ -3,7 +3,7 @@ mod proto;
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
-use opentelemetry_otlp::{MetricExporter, SpanExporter};
+use opentelemetry_otlp::{MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{Resource, metrics::SdkMeterProvider, trace::SdkTracerProvider};
 use proto::cookiejar::v1::{GetCookiesRequest, cookie_service_client::CookieServiceClient};
 use serde::Deserialize;
@@ -76,13 +76,17 @@ struct TelemetryProviders {
 }
 
 fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
-    let resource = Resource::builder()
-        .with_service_name("claude-usage-metrics")
-        .build();
+    let service_name =
+        std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "claude-usage-metrics".to_string());
+    let resource = Resource::builder().with_service_name(service_name).build();
 
-    // Create OTLP span exporter
+    // Create OTLP span exporter using gRPC (tonic)
+    let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://127.0.0.1:4317".to_string());
     let otlp_exporter = SpanExporter::builder()
         .with_tonic()
+        .with_endpoint(&otlp_endpoint)
+        .with_timeout(std::time::Duration::from_secs(10))
         .build()
         .context("Failed to create OTLP span exporter")?;
 
@@ -91,9 +95,12 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
         .with_resource(resource.clone())
         .build();
 
-    // Create metric exporter
+    // Create metric exporter using gRPC (metrics endpoint)
+    let metrics_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://127.0.0.1:4317".to_string());
     let metric_exporter = MetricExporter::builder()
         .with_tonic()
+        .with_endpoint(&metrics_endpoint)
         .build()
         .context("Failed to create metric exporter")?;
 
@@ -103,6 +110,7 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
         .build();
 
     global::set_meter_provider(meter_provider.clone());
+    global::set_tracer_provider(tracer_provider.clone());
 
     // Initialize tracing subscriber
     let tracer = tracer_provider.tracer("claude-usage-metrics");
@@ -199,7 +207,7 @@ async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Phase 1: Initialize telemetry (pre-tracing errors go to stderr)
     let providers = match init_telemetry() {
@@ -216,7 +224,13 @@ async fn main() -> anyhow::Result<()> {
         error!(error = %e, "Application error");
     }
 
-    // Phase 3: Shutdown providers (flush all spans and metrics)
+    // Phase 3: Flush and shutdown providers
+    if let Err(e) = providers.tracer_provider.force_flush() {
+        eprintln!("Error flushing tracer provider: {:?}", e);
+    }
+    if let Err(e) = providers.meter_provider.force_flush() {
+        eprintln!("Error flushing meter provider: {:?}", e);
+    }
     if let Err(e) = providers.tracer_provider.shutdown() {
         eprintln!("Error shutting down tracer provider: {:?}", e);
     }
