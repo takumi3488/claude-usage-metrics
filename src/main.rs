@@ -109,7 +109,9 @@ async fn main() -> anyhow::Result<()> {
     let org_id = std::env::var("CLAUDE_ORGANIZATION_ID")?;
     let url = format!("https://claude.ai/api/organizations/{org_id}/usage");
 
-    let http_client = reqwest::Client::new();
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
     let usage_response = http_client
         .get(&url)
         .header("Cookie", cookies)
@@ -128,7 +130,6 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
