@@ -31,7 +31,7 @@ struct UsageResponse {
 struct UsageMetric {
     name: String,
     utilization: f32,
-    minutes_to_reset: Option<i64>,
+    seconds_to_reset: Option<i64>,
 }
 
 impl From<UsageResponse> for Vec<UsageMetric> {
@@ -51,18 +51,18 @@ impl From<UsageResponse> for Vec<UsageMetric> {
             .into_iter()
             .filter_map(|(name, info)| {
                 info.map(|i| {
-                    let minutes_to_reset = i.resets_at.and_then(|reset_str| {
+                    let seconds_to_reset = i.resets_at.and_then(|reset_str| {
                         DateTime::parse_from_rfc3339(&reset_str)
                             .ok()
                             .map(|reset_time| {
                                 let duration = reset_time.with_timezone(&Utc) - now;
-                                duration.num_minutes().max(0)
+                                duration.num_seconds().max(0)
                             })
                     });
                     UsageMetric {
                         name: name.to_string(),
                         utilization: i.utilization,
-                        minutes_to_reset,
+                        seconds_to_reset,
                     }
                 })
             })
@@ -179,10 +179,10 @@ async fn run() -> anyhow::Result<()> {
         .with_description("Current Claude usage utilization rate")
         .with_unit("ratio")
         .build();
-    let minutes_to_reset_gauge = meter
-        .i64_gauge("claude.usage.minutes_to_reset")
-        .with_description("Minutes until usage limit resets")
-        .with_unit("min")
+    let seconds_to_reset_gauge = meter
+        .i64_gauge("claude.usage.seconds_to_reset")
+        .with_description("Seconds until usage limit resets")
+        .with_unit("s")
         .build();
 
     for metric in &usage_metrics {
@@ -190,16 +190,16 @@ async fn run() -> anyhow::Result<()> {
             metric.utilization as f64,
             &[KeyValue::new("metric_name", metric.name.clone())],
         );
-        if let Some(minutes) = metric.minutes_to_reset {
-            minutes_to_reset_gauge.record(
-                minutes,
+        if let Some(seconds) = metric.seconds_to_reset {
+            seconds_to_reset_gauge.record(
+                seconds,
                 &[KeyValue::new("metric_name", metric.name.clone())],
             );
         }
         info!(
             metric_name = %metric.name,
             utilization = %metric.utilization,
-            minutes_to_reset = ?metric.minutes_to_reset,
+            seconds_to_reset = ?metric.seconds_to_reset,
             "Recorded usage metric"
         );
     }
@@ -279,12 +279,12 @@ mod tests {
         assert_eq!(metrics.len(), 1);
         assert_eq!(metrics[0].name, "five_hour");
         assert_eq!(metrics[0].utilization, 0.5);
-        assert!(metrics[0].minutes_to_reset.is_none());
+        assert!(metrics[0].seconds_to_reset.is_none());
     }
 
     #[test]
     fn test_single_field_with_future_reset_time() {
-        let future_time = Utc::now() + Duration::minutes(30);
+        let future_time = Utc::now() + Duration::seconds(1800);
         let response = UsageResponse {
             five_hour: Some(UsageInfo {
                 utilization: 0.75,
@@ -301,9 +301,9 @@ mod tests {
         assert_eq!(metrics.len(), 1);
         assert_eq!(metrics[0].name, "five_hour");
         assert_eq!(metrics[0].utilization, 0.75);
-        // Allow 1 minute margin for test execution time
-        let minutes = metrics[0].minutes_to_reset.unwrap();
-        assert!((29..=30).contains(&minutes));
+        // Allow 1 second margin for test execution time
+        let seconds = metrics[0].seconds_to_reset.unwrap();
+        assert!((1799..=1800).contains(&seconds));
     }
 
     #[test]
@@ -322,7 +322,7 @@ mod tests {
             extra_usage: None,
         };
         let metrics: Vec<UsageMetric> = response.into();
-        assert_eq!(metrics[0].minutes_to_reset, Some(0));
+        assert_eq!(metrics[0].seconds_to_reset, Some(0));
     }
 
     #[test]
@@ -341,7 +341,7 @@ mod tests {
         };
         let metrics: Vec<UsageMetric> = response.into();
         assert_eq!(metrics.len(), 1);
-        assert!(metrics[0].minutes_to_reset.is_none());
+        assert!(metrics[0].seconds_to_reset.is_none());
     }
 
     #[test]

@@ -23,7 +23,7 @@ flowchart LR
   - 7-day Opus usage
   - 7-day Sonnet usage
   - Extra usage
-- Records utilization rate (0.0-1.0) and minutes until reset
+- Records utilization rate (0.0-1.0) and seconds until reset
 - Exports metrics via OpenTelemetry/OTLP to any compatible backend
 
 ## Environment Variables
@@ -65,7 +65,7 @@ The following metrics are exported:
 | Metric Name | Type | Description |
 |-------------|------|-------------|
 | `claude.usage.utilization` | Gauge (f64) | Usage rate from 0.0 to 1.0 |
-| `claude.usage.minutes_to_reset` | Gauge (i64) | Minutes until the usage window resets |
+| `claude.usage.seconds_to_reset` | Gauge (i64) | Seconds until the usage window resets |
 
 Each metric includes a `metric_name` attribute to identify the usage type:
 - `five_hour`
