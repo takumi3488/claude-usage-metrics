@@ -12,7 +12,7 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 
 #[derive(Debug, Deserialize)]
 struct UsageInfo {
-    utilization: f32,
+    utilization: f64,
     resets_at: Option<String>,
 }
 
@@ -30,7 +30,7 @@ struct UsageResponse {
 #[derive(Debug)]
 struct UsageMetric {
     name: String,
-    utilization: f32,
+    utilization: f64,
     seconds_to_reset: Option<i64>,
 }
 
@@ -187,7 +187,7 @@ async fn run() -> anyhow::Result<()> {
 
     for metric in &usage_metrics {
         utilization_gauge.record(
-            metric.utilization as f64,
+            metric.utilization / 100.0,
             &[KeyValue::new("metric_name", metric.name.clone())],
         );
         if let Some(seconds) = metric.seconds_to_reset {
@@ -198,7 +198,7 @@ async fn run() -> anyhow::Result<()> {
         }
         info!(
             metric_name = %metric.name,
-            utilization = %metric.utilization,
+            utilization = %(metric.utilization / 100.0),
             seconds_to_reset = ?metric.seconds_to_reset,
             "Recorded usage metric"
         );
