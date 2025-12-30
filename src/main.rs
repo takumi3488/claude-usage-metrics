@@ -3,11 +3,12 @@ mod proto;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::SpanExporter;
 use opentelemetry_sdk::trace::SdkTracerProvider;
+use proto::cookiejar::v1::{GetCookiesRequest, cookie_service_client::CookieServiceClient};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let otlp_exporter = SpanExporter::builder()
         .with_tonic()
         .build()
@@ -32,5 +33,16 @@ async fn main() {
 
     info!("Starting the application");
 
-    todo!();
+    let endpoint = std::env::var("COOKIEJAR_URL")?;
+    let mut client = CookieServiceClient::connect(endpoint).await?;
+
+    let request = GetCookiesRequest {
+        host: ".claude.ai".to_string(),
+    };
+    let response: tonic::Response<proto::cookiejar::v1::GetCookiesResponse> =
+        client.get_cookies(request).await?;
+
+    dbg!(&response);
+
+    Ok(())
 }
