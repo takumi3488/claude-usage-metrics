@@ -10,6 +10,10 @@ use serde::Deserialize;
 use tracing::{error, info, instrument};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
+// ============================================================================
+// Claude Types
+// ============================================================================
+
 #[derive(Debug, Deserialize)]
 struct UsageInfo {
     utilization: f64,
@@ -69,6 +73,42 @@ impl From<UsageResponse> for Vec<UsageMetric> {
             .collect()
     }
 }
+
+// ============================================================================
+// OpenRouter Types
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+struct OpenRouterCreditsData {
+    total_credits: f64,
+    total_usage: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenRouterCreditsResponse {
+    data: OpenRouterCreditsData,
+}
+
+#[derive(Debug)]
+struct OpenRouterMetrics {
+    total_credits: f64,
+    total_usage: f64,
+    remaining: f64,
+}
+
+impl From<OpenRouterCreditsResponse> for OpenRouterMetrics {
+    fn from(response: OpenRouterCreditsResponse) -> Self {
+        Self {
+            total_credits: response.data.total_credits,
+            total_usage: response.data.total_usage,
+            remaining: response.data.total_credits - response.data.total_usage,
+        }
+    }
+}
+
+// ============================================================================
+// Telemetry
+// ============================================================================
 
 struct TelemetryProviders {
     tracer_provider: SdkTracerProvider,
@@ -133,9 +173,13 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
     })
 }
 
+// ============================================================================
+// Claude Metrics Collection
+// ============================================================================
+
 #[instrument(name = "claude_usage_metrics_run", skip_all)]
-async fn run() -> anyhow::Result<()> {
-    info!("Starting the application");
+async fn run_claude() -> anyhow::Result<()> {
+    info!("Fetching Claude usage metrics");
 
     let endpoint =
         std::env::var("COOKIEJAR_URL").context("COOKIEJAR_URL environment variable not set")?;
@@ -206,6 +250,99 @@ async fn run() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+// ============================================================================
+// OpenRouter Metrics Collection
+// ============================================================================
+
+#[instrument(name = "openrouter_credits_run", skip_all)]
+async fn run_openrouter() -> anyhow::Result<()> {
+    info!("Fetching OpenRouter credits");
+
+    let api_key = std::env::var("OPENROUTER_API_KEY")
+        .context("OPENROUTER_API_KEY environment variable not set")?;
+
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("Failed to build HTTP client")?;
+
+    let response = http_client
+        .get("https://openrouter.ai/api/v1/credits")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .context("Failed to send request to OpenRouter API")?
+        .json::<OpenRouterCreditsResponse>()
+        .await
+        .context("Failed to parse OpenRouter credits response")?;
+
+    let metrics: OpenRouterMetrics = response.into();
+
+    // Record metrics
+    let meter = global::meter("openrouter-credits");
+
+    let total_gauge = meter
+        .f64_gauge("openrouter.credits.total")
+        .with_description("Total OpenRouter credits purchased")
+        .with_unit("USD")
+        .build();
+    let usage_gauge = meter
+        .f64_gauge("openrouter.credits.usage")
+        .with_description("Total OpenRouter credits used")
+        .with_unit("USD")
+        .build();
+    let remaining_gauge = meter
+        .f64_gauge("openrouter.credits.remaining")
+        .with_description("Remaining OpenRouter credits")
+        .with_unit("USD")
+        .build();
+
+    total_gauge.record(metrics.total_credits, &[]);
+    usage_gauge.record(metrics.total_usage, &[]);
+    remaining_gauge.record(metrics.remaining, &[]);
+
+    info!(
+        total_credits = %metrics.total_credits,
+        total_usage = %metrics.total_usage,
+        remaining = %metrics.remaining,
+        "Recorded OpenRouter credits metrics"
+    );
+
+    Ok(())
+}
+
+// ============================================================================
+// Main Run Function
+// ============================================================================
+
+#[instrument(name = "all_metrics_run", skip_all)]
+async fn run() -> anyhow::Result<()> {
+    info!("Starting metrics collection");
+
+    let (claude_result, openrouter_result) = tokio::join!(run_claude(), run_openrouter());
+
+    // Log errors and return combined error if any failed
+    let mut errors = Vec::new();
+    if let Err(ref e) = claude_result {
+        error!(error = %e, "Claude metrics collection failed");
+        errors.push(format!("Claude: {}", e));
+    }
+    if let Err(ref e) = openrouter_result {
+        error!(error = %e, "OpenRouter metrics collection failed");
+        errors.push(format!("OpenRouter: {}", e));
+    }
+
+    if !errors.is_empty() {
+        anyhow::bail!("Metrics collection failed: {}", errors.join("; "));
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Entry Point
+// ============================================================================
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -413,5 +550,36 @@ mod tests {
         };
         let metrics: Vec<UsageMetric> = response.into();
         assert_eq!(metrics.len(), 7);
+    }
+}
+
+#[cfg(test)]
+mod openrouter_tests {
+    use super::*;
+
+    #[test]
+    fn test_openrouter_metrics_conversion() {
+        let response = OpenRouterCreditsResponse {
+            data: OpenRouterCreditsData {
+                total_credits: 100.0,
+                total_usage: 25.5,
+            },
+        };
+        let metrics: OpenRouterMetrics = response.into();
+        assert_eq!(metrics.total_credits, 100.0);
+        assert_eq!(metrics.total_usage, 25.5);
+        assert_eq!(metrics.remaining, 74.5);
+    }
+
+    #[test]
+    fn test_openrouter_metrics_zero_usage() {
+        let response = OpenRouterCreditsResponse {
+            data: OpenRouterCreditsData {
+                total_credits: 50.0,
+                total_usage: 0.0,
+            },
+        };
+        let metrics: OpenRouterMetrics = response.into();
+        assert_eq!(metrics.remaining, 50.0);
     }
 }
