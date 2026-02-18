@@ -1,7 +1,7 @@
 mod proto;
 
 use anyhow::Context;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::{MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{Resource, metrics::SdkMeterProvider, trace::SdkTracerProvider};
@@ -104,6 +104,30 @@ impl From<OpenRouterCreditsResponse> for OpenRouterMetrics {
             remaining: response.data.total_credits - response.data.total_usage,
         }
     }
+}
+
+// ============================================================================
+// GitHub Copilot Types
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+struct GithubCopilotQuotaRemaining {
+    #[serde(rename = "chatPercentage")]
+    chat_percentage: f64,
+    #[serde(rename = "premiumInteractionsPercentage")]
+    premium_interactions_percentage: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubCopilotQuotas {
+    remaining: GithubCopilotQuotaRemaining,
+    #[serde(rename = "resetDate")]
+    reset_date: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubCopilotResponse {
+    quotas: GithubCopilotQuotas,
 }
 
 // ============================================================================
@@ -313,6 +337,96 @@ async fn run_openrouter() -> anyhow::Result<()> {
 }
 
 // ============================================================================
+// GitHub Copilot Metrics Collection
+// ============================================================================
+
+#[instrument(name = "github_copilot_quota_run", skip_all)]
+async fn run_github_copilot() -> anyhow::Result<()> {
+    info!("Fetching GitHub Copilot quota");
+
+    let endpoint =
+        std::env::var("COOKIEJAR_URL").context("COOKIEJAR_URL environment variable not set")?;
+    let mut client = CookieServiceClient::connect(endpoint)
+        .await
+        .context("Failed to connect to cookie service")?;
+
+    let request = GetCookiesRequest {
+        host: "github.com".to_string(),
+    };
+    let response: tonic::Response<proto::cookiejar::v1::GetCookiesResponse> = client
+        .get_cookies(request)
+        .await
+        .context("Failed to get cookies")?;
+
+    let cookies = response.into_inner().cookies;
+
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("Failed to build HTTP client")?;
+
+    let quota_response = http_client
+        .get("https://github.com/github-copilot/chat")
+        .header("Cookie", cookies)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+        .header("github-verified-fetch", "true")
+        .header("x-requested-with", "XMLHttpRequest")
+        .header("accept", "application/json")
+        .send()
+        .await
+        .context("Failed to send request to GitHub Copilot API")?
+        .json::<GithubCopilotResponse>()
+        .await
+        .context("Failed to parse GitHub Copilot quota response")?;
+
+    let quotas = quota_response.quotas;
+
+    let now = Utc::now();
+    let seconds_to_reset = NaiveDate::parse_from_str(&quotas.reset_date, "%Y-%m-%d")
+        .ok()
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|dt| {
+            let reset_utc = dt.and_utc();
+            (reset_utc - now).num_seconds().max(0)
+        });
+
+    let meter = global::meter("github-copilot-quota");
+    let chat_percentage_gauge = meter
+        .f64_gauge("github_copilot.usage.chat_percentage")
+        .with_description("GitHub Copilot chat usage remaining (ratio)")
+        .with_unit("ratio")
+        .build();
+    let premium_percentage_gauge = meter
+        .f64_gauge("github_copilot.usage.premium_interactions_percentage")
+        .with_description("GitHub Copilot premium interactions remaining (ratio)")
+        .with_unit("ratio")
+        .build();
+    let seconds_to_reset_gauge = meter
+        .i64_gauge("github_copilot.usage.seconds_to_reset")
+        .with_description("Seconds until GitHub Copilot quota resets")
+        .with_unit("s")
+        .build();
+
+    let chat_ratio = quotas.remaining.chat_percentage / 100.0;
+    let premium_ratio = quotas.remaining.premium_interactions_percentage / 100.0;
+
+    chat_percentage_gauge.record(chat_ratio, &[]);
+    premium_percentage_gauge.record(premium_ratio, &[]);
+    if let Some(seconds) = seconds_to_reset {
+        seconds_to_reset_gauge.record(seconds, &[]);
+    }
+
+    info!(
+        chat_percentage = %chat_ratio,
+        premium_interactions_percentage = %premium_ratio,
+        seconds_to_reset = ?seconds_to_reset,
+        "Recorded GitHub Copilot quota metrics"
+    );
+
+    Ok(())
+}
+
+// ============================================================================
 // Main Run Function
 // ============================================================================
 
@@ -320,7 +434,8 @@ async fn run_openrouter() -> anyhow::Result<()> {
 async fn run() -> anyhow::Result<()> {
     info!("Starting metrics collection");
 
-    let (claude_result, openrouter_result) = tokio::join!(run_claude(), run_openrouter());
+    let (claude_result, openrouter_result, github_copilot_result) =
+        tokio::join!(run_claude(), run_openrouter(), run_github_copilot());
 
     // Log errors and return combined error if any failed
     let mut errors = Vec::new();
@@ -331,6 +446,10 @@ async fn run() -> anyhow::Result<()> {
     if let Err(ref e) = openrouter_result {
         error!(error = %e, "OpenRouter metrics collection failed");
         errors.push(format!("OpenRouter: {}", e));
+    }
+    if let Err(ref e) = github_copilot_result {
+        error!(error = %e, "GitHub Copilot metrics collection failed");
+        errors.push(format!("GitHub Copilot: {}", e));
     }
 
     if !errors.is_empty() {
