@@ -391,14 +391,9 @@ async fn run_github_copilot() -> anyhow::Result<()> {
         });
 
     let meter = global::meter("github-copilot-quota");
-    let chat_percentage_gauge = meter
-        .f64_gauge("github_copilot.usage.chat_percentage")
-        .with_description("GitHub Copilot chat usage remaining (ratio)")
-        .with_unit("ratio")
-        .build();
-    let premium_percentage_gauge = meter
-        .f64_gauge("github_copilot.usage.premium_interactions_percentage")
-        .with_description("GitHub Copilot premium interactions remaining (ratio)")
+    let utilization_gauge = meter
+        .f64_gauge("github_copilot.usage.utilization")
+        .with_description("GitHub Copilot usage utilization rate")
         .with_unit("ratio")
         .build();
     let seconds_to_reset_gauge = meter
@@ -407,20 +402,23 @@ async fn run_github_copilot() -> anyhow::Result<()> {
         .with_unit("s")
         .build();
 
-    let chat_ratio = quotas.remaining.chat_percentage / 100.0;
-    let premium_ratio = quotas.remaining.premium_interactions_percentage / 100.0;
+    let chat_utilization = 1.0 - quotas.remaining.chat_percentage / 100.0;
+    let premium_utilization = 1.0 - quotas.remaining.premium_interactions_percentage / 100.0;
 
-    chat_percentage_gauge.record(chat_ratio, &[]);
-    premium_percentage_gauge.record(premium_ratio, &[]);
+    utilization_gauge.record(chat_utilization, &[KeyValue::new("metric_name", "chat")]);
+    utilization_gauge.record(
+        premium_utilization,
+        &[KeyValue::new("metric_name", "premium_interactions")],
+    );
     if let Some(seconds) = seconds_to_reset {
         seconds_to_reset_gauge.record(seconds, &[]);
     }
 
     info!(
-        chat_percentage = %chat_ratio,
-        premium_interactions_percentage = %premium_ratio,
+        chat_utilization = %chat_utilization,
+        premium_interactions_utilization = %premium_utilization,
         seconds_to_reset = ?seconds_to_reset,
-        "Recorded GitHub Copilot quota metrics"
+        "Recorded GitHub Copilot usage metrics"
     );
 
     Ok(())
