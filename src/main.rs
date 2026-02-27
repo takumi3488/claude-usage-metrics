@@ -156,7 +156,7 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
         .context("Failed to create OTLP span exporter")?;
 
     let tracer_provider = SdkTracerProvider::builder()
-        .with_batch_exporter(otlp_exporter)
+        .with_simple_exporter(otlp_exporter)
         .with_resource(resource.clone())
         .build();
 
@@ -201,15 +201,19 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
 // Claude Metrics Collection
 // ============================================================================
 
-#[instrument(name = "claude_usage_metrics_run", skip_all)]
+#[instrument(name = "claude_usage_metrics_run", skip_all, err)]
 async fn run_claude() -> anyhow::Result<()> {
     info!("Fetching Claude usage metrics");
 
     let endpoint =
         std::env::var("COOKIEJAR_URL").context("COOKIEJAR_URL environment variable not set")?;
-    let mut client = CookieServiceClient::connect(endpoint)
+    let channel = tonic::transport::Channel::from_shared(endpoint.into_bytes())
+        .context("Invalid COOKIEJAR_URL")?
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .connect()
         .await
         .context("Failed to connect to cookie service")?;
+    let mut client = CookieServiceClient::new(channel);
 
     let request = GetCookiesRequest {
         host: ".claude.ai".to_string(),
@@ -236,6 +240,8 @@ async fn run_claude() -> anyhow::Result<()> {
         .send()
         .await
         .context("Failed to send request to Claude API")?
+        .error_for_status()
+        .context("Claude API returned non-2xx status")?
         .json::<UsageResponse>()
         .await
         .context("Failed to parse usage response")?;
@@ -279,7 +285,7 @@ async fn run_claude() -> anyhow::Result<()> {
 // OpenRouter Metrics Collection
 // ============================================================================
 
-#[instrument(name = "openrouter_credits_run", skip_all)]
+#[instrument(name = "openrouter_credits_run", skip_all, err)]
 async fn run_openrouter() -> anyhow::Result<()> {
     info!("Fetching OpenRouter credits");
 
@@ -297,6 +303,8 @@ async fn run_openrouter() -> anyhow::Result<()> {
         .send()
         .await
         .context("Failed to send request to OpenRouter API")?
+        .error_for_status()
+        .context("OpenRouter API returned non-2xx status")?
         .json::<OpenRouterCreditsResponse>()
         .await
         .context("Failed to parse OpenRouter credits response")?;
@@ -340,15 +348,19 @@ async fn run_openrouter() -> anyhow::Result<()> {
 // GitHub Copilot Metrics Collection
 // ============================================================================
 
-#[instrument(name = "github_copilot_quota_run", skip_all)]
+#[instrument(name = "github_copilot_quota_run", skip_all, err)]
 async fn run_github_copilot() -> anyhow::Result<()> {
     info!("Fetching GitHub Copilot quota");
 
     let endpoint =
         std::env::var("COOKIEJAR_URL").context("COOKIEJAR_URL environment variable not set")?;
-    let mut client = CookieServiceClient::connect(endpoint)
+    let channel = tonic::transport::Channel::from_shared(endpoint.into_bytes())
+        .context("Invalid COOKIEJAR_URL")?
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .connect()
         .await
         .context("Failed to connect to cookie service")?;
+    let mut client = CookieServiceClient::new(channel);
 
     let request = GetCookiesRequest {
         host: "github.com".to_string(),
@@ -375,6 +387,8 @@ async fn run_github_copilot() -> anyhow::Result<()> {
         .send()
         .await
         .context("Failed to send request to GitHub Copilot API")?
+        .error_for_status()
+        .context("GitHub Copilot API returned non-2xx status")?
         .json::<GithubCopilotResponse>()
         .await
         .context("Failed to parse GitHub Copilot quota response")?;
@@ -428,7 +442,7 @@ async fn run_github_copilot() -> anyhow::Result<()> {
 // Main Run Function
 // ============================================================================
 
-#[instrument(name = "all_metrics_run", skip_all)]
+#[instrument(name = "all_metrics_run", skip_all, err)]
 async fn run() -> anyhow::Result<()> {
     info!("Starting metrics collection");
 
@@ -478,13 +492,7 @@ async fn main() -> anyhow::Result<()> {
         error!(error = %e, "Application error");
     }
 
-    // Phase 3: Flush and shutdown providers
-    if let Err(e) = providers.tracer_provider.force_flush() {
-        eprintln!("Error flushing tracer provider: {:?}", e);
-    }
-    if let Err(e) = providers.meter_provider.force_flush() {
-        eprintln!("Error flushing meter provider: {:?}", e);
-    }
+    // Phase 3: Shutdown providers (flushes pending data)
     if let Err(e) = providers.tracer_provider.shutdown() {
         eprintln!("Error shutting down tracer provider: {:?}", e);
     }
