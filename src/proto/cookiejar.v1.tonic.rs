@@ -2,8 +2,9 @@
 /// Generated client implementations.
 pub mod cookie_service_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
-    use tonic::codegen::*;
-    use tonic::codegen::http::Uri;
+    use tonic::codegen::{
+        Body, Bytes, CompressionEncoding, GrpcMethod, InterceptedService, StdError, http,
+    };
     #[derive(Debug, Clone)]
     pub struct CookieServiceClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -30,7 +31,7 @@ pub mod cookie_service_client {
             let inner = tonic::client::Grpc::new(inner);
             Self { inner }
         }
-        pub fn with_origin(inner: T, origin: Uri) -> Self {
+        pub fn with_origin(inner: T, origin: http::Uri) -> Self {
             let inner = tonic::client::Grpc::with_origin(inner, origin);
             Self { inner }
         }
@@ -114,8 +115,11 @@ pub mod cookie_service_client {
 /// Generated server implementations.
 pub mod cookie_service_server {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
-    use tonic::codegen::*;
-    /// Generated trait containing gRPC methods that should be implemented for use with CookieServiceServer.
+    use tonic::codegen::{
+        Arc, Body, BoxFuture, CompressionEncoding, Context, EnabledCompressionEncodings,
+        InterceptedService, Poll, StdError, async_trait, http,
+    };
+    /// Generated trait containing gRPC methods that should be implemented for use with [`CookieServiceServer`].
     #[async_trait]
     pub trait CookieService: Send + Sync + 'static {
         async fn get_cookies(
@@ -141,8 +145,8 @@ pub mod cookie_service_server {
         pub fn from_arc(inner: Arc<T>) -> Self {
             Self {
                 inner,
-                accept_compression_encodings: Default::default(),
-                send_compression_encodings: Default::default(),
+                accept_compression_encodings: EnabledCompressionEncodings::default(),
+                send_compression_encodings: EnabledCompressionEncodings::default(),
                 max_decoding_message_size: None,
                 max_encoding_message_size: None,
             }
@@ -203,7 +207,6 @@ pub mod cookie_service_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
                 "/cookiejar.v1.CookieService/GetCookies" => {
-                    #[allow(non_camel_case_types)]
                     struct GetCookiesSvc<T: CookieService>(pub Arc<T>);
                     impl<
                         T: CookieService,
@@ -258,7 +261,7 @@ pub mod cookie_service_server {
                                     tonic::metadata::GRPC_CONTENT_TYPE,
                                 )
                                 .body(tonic::body::Body::empty())
-                                .unwrap(),
+                                .unwrap_or_else(|_| unreachable!("valid response builder should not fail")),
                         )
                     })
                 }

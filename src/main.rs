@@ -250,7 +250,7 @@ async fn run_claude() -> anyhow::Result<()> {
         .await
         .context("Failed to read response body")?;
     let usage_response = serde_json::from_str::<UsageResponse>(&body)
-        .with_context(|| format!("Failed to parse usage response: {}", body))?;
+        .with_context(|| format!("Failed to parse usage response: {body}"))?;
     let usage_metrics: Vec<UsageMetric> = usage_response.into();
 
     let meter = global::meter("claude-usage-metrics");
@@ -305,7 +305,7 @@ async fn run_openrouter() -> anyhow::Result<()> {
 
     let response = http_client
         .get("https://openrouter.ai/api/v1/credits")
-        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Authorization", format!("Bearer {api_key}"))
         .send()
         .await
         .context("Failed to send request to OpenRouter API")?
@@ -459,15 +459,15 @@ async fn run() -> anyhow::Result<()> {
     let mut errors = Vec::new();
     if let Err(ref e) = claude_result {
         error!(error = %e, "Claude metrics collection failed");
-        errors.push(format!("Claude: {}", e));
+        errors.push(format!("Claude: {e}"));
     }
     if let Err(ref e) = openrouter_result {
         error!(error = %e, "OpenRouter metrics collection failed");
-        errors.push(format!("OpenRouter: {}", e));
+        errors.push(format!("OpenRouter: {e}"));
     }
     if let Err(ref e) = github_copilot_result {
         error!(error = %e, "GitHub Copilot metrics collection failed");
-        errors.push(format!("GitHub Copilot: {}", e));
+        errors.push(format!("GitHub Copilot: {e}"));
     }
 
     if !errors.is_empty() {
@@ -487,7 +487,7 @@ async fn main() -> anyhow::Result<()> {
     let providers = match init_telemetry() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Failed to initialize telemetry: {:#}", e);
+            eprintln!("Failed to initialize telemetry: {e:#}");
             return Err(e);
         }
     };
@@ -500,10 +500,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Phase 3: Shutdown providers (flushes pending data)
     if let Err(e) = providers.tracer_provider.shutdown() {
-        eprintln!("Error shutting down tracer provider: {:?}", e);
+        eprintln!("Error shutting down tracer provider: {e:?}");
     }
     if let Err(e) = providers.meter_provider.shutdown() {
-        eprintln!("Error shutting down meter provider: {:?}", e);
+        eprintln!("Error shutting down meter provider: {e:?}");
     }
 
     result
@@ -548,7 +548,7 @@ mod tests {
         let metrics: Vec<UsageMetric> = response.into();
         assert_eq!(metrics.len(), 1);
         assert_eq!(metrics[0].name, "five_hour");
-        assert_eq!(metrics[0].utilization, 0.5);
+        assert!((metrics[0].utilization - 0.5_f64).abs() < f64::EPSILON);
         assert!(metrics[0].seconds_to_reset.is_none());
     }
 
@@ -571,9 +571,11 @@ mod tests {
         let metrics: Vec<UsageMetric> = response.into();
         assert_eq!(metrics.len(), 1);
         assert_eq!(metrics[0].name, "five_hour");
-        assert_eq!(metrics[0].utilization, 0.75);
+        assert!((metrics[0].utilization - 0.75_f64).abs() < f64::EPSILON);
         // Allow 1 second margin for test execution time
-        let seconds = metrics[0].seconds_to_reset.unwrap();
+        let Some(seconds) = metrics[0].seconds_to_reset else {
+            panic!("seconds_to_reset should be Some");
+        };
         assert!((1799..=1800).contains(&seconds));
     }
 
@@ -667,13 +669,13 @@ mod tests {
         let metrics: Vec<UsageMetric> = response.into();
         assert_eq!(metrics.len(), 4);
         assert_eq!(metrics[0].name, "five_hour");
-        assert_eq!(metrics[0].utilization, 0.1);
+        assert!((metrics[0].utilization - 0.1_f64).abs() < f64::EPSILON);
         assert_eq!(metrics[1].name, "seven_day");
-        assert_eq!(metrics[1].utilization, 0.2);
+        assert!((metrics[1].utilization - 0.2_f64).abs() < f64::EPSILON);
         assert_eq!(metrics[2].name, "seven_day_opus");
-        assert_eq!(metrics[2].utilization, 0.3);
+        assert!((metrics[2].utilization - 0.3_f64).abs() < f64::EPSILON);
         assert_eq!(metrics[3].name, "extra_usage");
-        assert_eq!(metrics[3].utilization, 0.4);
+        assert!((metrics[3].utilization - 0.4_f64).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -730,9 +732,9 @@ mod openrouter_tests {
             },
         };
         let metrics: OpenRouterMetrics = response.into();
-        assert_eq!(metrics.total_credits, 100.0);
-        assert_eq!(metrics.total_usage, 25.5);
-        assert_eq!(metrics.remaining, 74.5);
+        assert!((metrics.total_credits - 100.0_f64).abs() < f64::EPSILON);
+        assert!((metrics.total_usage - 25.5_f64).abs() < f64::EPSILON);
+        assert!((metrics.remaining - 74.5_f64).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -744,6 +746,6 @@ mod openrouter_tests {
             },
         };
         let metrics: OpenRouterMetrics = response.into();
-        assert_eq!(metrics.remaining, 50.0);
+        assert!((metrics.remaining - 50.0_f64).abs() < f64::EPSILON);
     }
 }
