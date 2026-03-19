@@ -532,9 +532,9 @@ mod openrouter_tests {
             total_usage: 25.5,
         };
         let remaining = data.total_credits - data.total_usage;
-        assert_eq!(data.total_credits, 100.0);
-        assert_eq!(data.total_usage, 25.5);
-        assert_eq!(remaining, 74.5);
+        assert!((data.total_credits - 100.0_f64).abs() < f64::EPSILON);
+        assert!((data.total_usage - 25.5_f64).abs() < f64::EPSILON);
+        assert!((remaining - 74.5_f64).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -544,6 +544,6 @@ mod openrouter_tests {
             total_usage: 0.0,
         };
         let remaining = data.total_credits - data.total_usage;
-        assert_eq!(remaining, 50.0);
+        assert!((remaining - 50.0_f64).abs() < f64::EPSILON);
     }
 }
