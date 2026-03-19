@@ -1940,7 +1940,9 @@ dependencies = [
 
 [[package]]
 name = "sehercode"
-version = "0.0.22"
+version = "0.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b35796b5dcae4aad9165496b215f11ed637dac34f35af12850241c2e6417ccf0"
 dependencies = [
  "base64",
  "chrono",
