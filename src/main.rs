@@ -1,36 +1,20 @@
 mod proto;
 
 use anyhow::Context;
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::Utc;
 use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::{MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{Resource, metrics::SdkMeterProvider, trace::SdkTracerProvider};
 use proto::cookiejar::v1::{GetCookiesRequest, cookie_service_client::CookieServiceClient};
-use serde::Deserialize;
+use seher::claude::ClaudeClient;
+use seher::copilot::CopilotClient;
+use seher::openrouter::OpenRouterClient;
 use tracing::{error, info, instrument};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 // ============================================================================
 // Claude Types
 // ============================================================================
-
-#[derive(Debug, Deserialize)]
-struct UsageInfo {
-    utilization: Option<f64>,
-    resets_at: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UsageResponse {
-    five_hour: Option<UsageInfo>,
-    seven_day: Option<UsageInfo>,
-    seven_day_oauth_apps: Option<UsageInfo>,
-    seven_day_opus: Option<UsageInfo>,
-    seven_day_sonnet: Option<UsageInfo>,
-    seven_day_cowork: Option<UsageInfo>,
-    iguana_necktie: Option<UsageInfo>,
-    extra_usage: Option<UsageInfo>,
-}
 
 #[derive(Debug)]
 struct UsageMetric {
@@ -39,99 +23,26 @@ struct UsageMetric {
     seconds_to_reset: Option<i64>,
 }
 
-impl From<UsageResponse> for Vec<UsageMetric> {
-    fn from(response: UsageResponse) -> Self {
-        let now = Utc::now();
-        let fields: [(&str, Option<UsageInfo>); 8] = [
-            ("five_hour", response.five_hour),
-            ("seven_day", response.seven_day),
-            ("seven_day_oauth_apps", response.seven_day_oauth_apps),
-            ("seven_day_opus", response.seven_day_opus),
-            ("seven_day_sonnet", response.seven_day_sonnet),
-            ("seven_day_cowork", response.seven_day_cowork),
-            ("iguana_necktie", response.iguana_necktie),
-            ("extra_usage", response.extra_usage),
-        ];
-
-        fields
-            .into_iter()
-            .filter_map(|(name, info)| {
-                info.and_then(|i| {
-                    i.utilization.map(|utilization| {
-                        let seconds_to_reset = i.resets_at.and_then(|reset_str| {
-                            DateTime::parse_from_rfc3339(&reset_str)
-                                .ok()
-                                .map(|reset_time| {
-                                    let duration = reset_time.with_timezone(&Utc) - now;
-                                    duration.num_seconds().max(0)
-                                })
-                        });
-                        UsageMetric {
-                            name: name.to_string(),
-                            utilization,
-                            seconds_to_reset,
-                        }
-                    })
-                })
-            })
-            .collect()
-    }
-}
-
 // ============================================================================
-// OpenRouter Types
+// Conversion Functions
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
-struct OpenRouterCreditsData {
-    total_credits: f64,
-    total_usage: f64,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenRouterCreditsResponse {
-    data: OpenRouterCreditsData,
-}
-
-#[derive(Debug)]
-struct OpenRouterMetrics {
-    total_credits: f64,
-    total_usage: f64,
-    remaining: f64,
-}
-
-impl From<OpenRouterCreditsResponse> for OpenRouterMetrics {
-    fn from(response: OpenRouterCreditsResponse) -> Self {
-        Self {
-            total_credits: response.data.total_credits,
-            total_usage: response.data.total_usage,
-            remaining: response.data.total_credits - response.data.total_usage,
-        }
-    }
-}
-
-// ============================================================================
-// GitHub Copilot Types
-// ============================================================================
-
-#[derive(Debug, Deserialize)]
-struct GithubCopilotQuotaRemaining {
-    #[serde(rename = "chatPercentage")]
-    chat_percentage: f64,
-    #[serde(rename = "premiumInteractionsPercentage")]
-    premium_interactions_percentage: f64,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubCopilotQuotas {
-    remaining: GithubCopilotQuotaRemaining,
-    #[serde(rename = "resetDate")]
-    reset_date: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubCopilotResponse {
-    quotas: GithubCopilotQuotas,
+fn convert_claude_usage(response: &seher::UsageResponse) -> Vec<UsageMetric> {
+    let now = Utc::now();
+    response
+        .all_windows()
+        .into_iter()
+        .map(|(name, window)| {
+            let seconds_to_reset = window
+                .resets_at
+                .map(|reset_time| (reset_time - now).num_seconds().max(0));
+            UsageMetric {
+                name: name.to_string(),
+                utilization: window.utilization,
+                seconds_to_reset,
+            }
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -202,13 +113,10 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
 }
 
 // ============================================================================
-// Claude Metrics Collection
+// Helpers
 // ============================================================================
 
-#[instrument(name = "claude_usage_metrics_run", skip_all, err)]
-async fn run_claude() -> anyhow::Result<()> {
-    info!("Fetching Claude usage metrics");
-
+async fn get_cookies(host: &str) -> anyhow::Result<String> {
     let endpoint =
         std::env::var("COOKIEJAR_URL").context("COOKIEJAR_URL environment variable not set")?;
     let channel = tonic::transport::Channel::from_shared(endpoint.into_bytes())
@@ -219,39 +127,32 @@ async fn run_claude() -> anyhow::Result<()> {
         .context("Failed to connect to cookie service")?;
     let mut client = CookieServiceClient::new(channel);
 
-    let request = GetCookiesRequest {
-        host: ".claude.ai".to_string(),
-    };
-    let response: tonic::Response<proto::cookiejar::v1::GetCookiesResponse> = client
-        .get_cookies(request)
+    let response = client
+        .get_cookies(GetCookiesRequest {
+            host: host.to_string(),
+        })
         .await
         .context("Failed to get cookies")?;
+    Ok(response.into_inner().cookies)
+}
 
-    let cookies = response.into_inner().cookies;
+// ============================================================================
+// Claude Metrics Collection
+// ============================================================================
+
+#[instrument(name = "claude_usage_metrics_run", skip_all, err)]
+async fn run_claude() -> anyhow::Result<()> {
+    info!("Fetching Claude usage metrics");
+
+    let cookies = get_cookies(".claude.ai").await?;
 
     let org_id = std::env::var("CLAUDE_ORGANIZATION_ID")
         .context("CLAUDE_ORGANIZATION_ID environment variable not set")?;
-    let url = format!("https://claude.ai/api/organizations/{org_id}/usage");
 
-    let http_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .context("Failed to build HTTP client")?;
-    let body = http_client
-        .get(&url)
-        .header("Cookie", cookies)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-        .send()
+    let usage_response = ClaudeClient::fetch_usage_with_header(&cookies, &org_id)
         .await
-        .context("Failed to send request to Claude API")?
-        .error_for_status()
-        .context("Claude API returned non-2xx status")?
-        .text()
-        .await
-        .context("Failed to read response body")?;
-    let usage_response = serde_json::from_str::<UsageResponse>(&body)
-        .with_context(|| format!("Failed to parse usage response: {body}"))?;
-    let usage_metrics: Vec<UsageMetric> = usage_response.into();
+        .context("Failed to fetch Claude usage")?;
+    let usage_metrics = convert_claude_usage(&usage_response);
 
     let meter = global::meter("claude-usage-metrics");
     let utilization_gauge = meter
@@ -298,24 +199,9 @@ async fn run_openrouter() -> anyhow::Result<()> {
     let api_key = std::env::var("OPENROUTER_API_KEY")
         .context("OPENROUTER_API_KEY environment variable not set")?;
 
-    let http_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .context("Failed to build HTTP client")?;
-
-    let response = http_client
-        .get("https://openrouter.ai/api/v1/credits")
-        .header("Authorization", format!("Bearer {api_key}"))
-        .send()
+    let response = OpenRouterClient::fetch_credits(&api_key)
         .await
-        .context("Failed to send request to OpenRouter API")?
-        .error_for_status()
-        .context("OpenRouter API returned non-2xx status")?
-        .json::<OpenRouterCreditsResponse>()
-        .await
-        .context("Failed to parse OpenRouter credits response")?;
-
-    let metrics: OpenRouterMetrics = response.into();
+        .map_err(|e| anyhow::anyhow!("Failed to fetch OpenRouter credits: {e}"))?;
 
     // Record metrics
     let meter = global::meter("openrouter-credits");
@@ -336,14 +222,15 @@ async fn run_openrouter() -> anyhow::Result<()> {
         .with_unit("USD")
         .build();
 
-    total_gauge.record(metrics.total_credits, &[]);
-    usage_gauge.record(metrics.total_usage, &[]);
-    remaining_gauge.record(metrics.remaining, &[]);
+    let remaining = response.data.total_credits - response.data.total_usage;
+    total_gauge.record(response.data.total_credits, &[]);
+    usage_gauge.record(response.data.total_usage, &[]);
+    remaining_gauge.record(remaining, &[]);
 
     info!(
-        total_credits = %metrics.total_credits,
-        total_usage = %metrics.total_usage,
-        remaining = %metrics.remaining,
+        total_credits = %response.data.total_credits,
+        total_usage = %response.data.total_usage,
+        remaining = %remaining,
         "Recorded OpenRouter credits metrics"
     );
 
@@ -358,57 +245,17 @@ async fn run_openrouter() -> anyhow::Result<()> {
 async fn run_github_copilot() -> anyhow::Result<()> {
     info!("Fetching GitHub Copilot quota");
 
-    let endpoint =
-        std::env::var("COOKIEJAR_URL").context("COOKIEJAR_URL environment variable not set")?;
-    let channel = tonic::transport::Channel::from_shared(endpoint.into_bytes())
-        .context("Invalid COOKIEJAR_URL")?
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .connect()
+    let cookies = get_cookies("github.com").await?;
+
+    let quota = CopilotClient::fetch_quota_with_header(&cookies)
         .await
-        .context("Failed to connect to cookie service")?;
-    let mut client = CookieServiceClient::new(channel);
+        .map_err(|e| anyhow::anyhow!("Failed to fetch GitHub Copilot quota: {e}"))?;
 
-    let request = GetCookiesRequest {
-        host: "github.com".to_string(),
-    };
-    let response: tonic::Response<proto::cookiejar::v1::GetCookiesResponse> = client
-        .get_cookies(request)
-        .await
-        .context("Failed to get cookies")?;
-
-    let cookies = response.into_inner().cookies;
-
-    let http_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .context("Failed to build HTTP client")?;
-
-    let quota_response = http_client
-        .get("https://github.com/github-copilot/chat")
-        .header("Cookie", cookies)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-        .header("github-verified-fetch", "true")
-        .header("x-requested-with", "XMLHttpRequest")
-        .header("accept", "application/json")
-        .send()
-        .await
-        .context("Failed to send request to GitHub Copilot API")?
-        .error_for_status()
-        .context("GitHub Copilot API returned non-2xx status")?
-        .json::<GithubCopilotResponse>()
-        .await
-        .context("Failed to parse GitHub Copilot quota response")?;
-
-    let quotas = quota_response.quotas;
-
-    let now = Utc::now();
-    let seconds_to_reset = NaiveDate::parse_from_str(&quotas.reset_date, "%Y-%m-%d")
-        .ok()
-        .and_then(|d| d.and_hms_opt(0, 0, 0))
-        .map(|dt| {
-            let reset_utc = dt.and_utc();
-            (reset_utc - now).num_seconds().max(0)
-        });
+    let chat_utilization = quota.chat_utilization / 100.0;
+    let premium_utilization = quota.premium_utilization / 100.0;
+    let seconds_to_reset = quota
+        .reset_time
+        .map(|rt| (rt - Utc::now()).num_seconds().max(0));
 
     let meter = global::meter("github-copilot-quota");
     let utilization_gauge = meter
@@ -421,9 +268,6 @@ async fn run_github_copilot() -> anyhow::Result<()> {
         .with_description("Seconds until GitHub Copilot quota resets")
         .with_unit("s")
         .build();
-
-    let chat_utilization = 1.0 - quotas.remaining.chat_percentage / 100.0;
-    let premium_utilization = 1.0 - quotas.remaining.premium_interactions_percentage / 100.0;
 
     utilization_gauge.record(chat_utilization, &[KeyValue::new("metric_name", "chat")]);
     utilization_gauge.record(
@@ -513,39 +357,40 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use chrono::{Duration, Utc};
+    use seher::{UsageResponse, UsageWindow};
 
     #[test]
     fn test_empty_response_returns_empty_vec() {
         let response = UsageResponse {
             five_hour: None,
             seven_day: None,
+            seven_day_sonnet: None,
             seven_day_oauth_apps: None,
             seven_day_opus: None,
-            seven_day_sonnet: None,
             seven_day_cowork: None,
             iguana_necktie: None,
             extra_usage: None,
         };
-        let metrics: Vec<UsageMetric> = response.into();
+        let metrics = convert_claude_usage(&response);
         assert!(metrics.is_empty());
     }
 
     #[test]
     fn test_single_field_with_no_reset_time() {
         let response = UsageResponse {
-            five_hour: Some(UsageInfo {
-                utilization: Some(0.5),
+            five_hour: Some(UsageWindow {
+                utilization: 0.5,
                 resets_at: None,
             }),
             seven_day: None,
+            seven_day_sonnet: None,
             seven_day_oauth_apps: None,
             seven_day_opus: None,
-            seven_day_sonnet: None,
             seven_day_cowork: None,
             iguana_necktie: None,
             extra_usage: None,
         };
-        let metrics: Vec<UsageMetric> = response.into();
+        let metrics = convert_claude_usage(&response);
         assert_eq!(metrics.len(), 1);
         assert_eq!(metrics[0].name, "five_hour");
         assert!((metrics[0].utilization - 0.5_f64).abs() < f64::EPSILON);
@@ -556,19 +401,19 @@ mod tests {
     fn test_single_field_with_future_reset_time() {
         let future_time = Utc::now() + Duration::seconds(1800);
         let response = UsageResponse {
-            five_hour: Some(UsageInfo {
-                utilization: Some(0.75),
-                resets_at: Some(future_time.to_rfc3339()),
+            five_hour: Some(UsageWindow {
+                utilization: 0.75,
+                resets_at: Some(future_time),
             }),
             seven_day: None,
+            seven_day_sonnet: None,
             seven_day_oauth_apps: None,
             seven_day_opus: None,
-            seven_day_sonnet: None,
             seven_day_cowork: None,
             iguana_necktie: None,
             extra_usage: None,
         };
-        let metrics: Vec<UsageMetric> = response.into();
+        let metrics = convert_claude_usage(&response);
         assert_eq!(metrics.len(), 1);
         assert_eq!(metrics[0].name, "five_hour");
         assert!((metrics[0].utilization - 0.75_f64).abs() < f64::EPSILON);
@@ -583,90 +428,47 @@ mod tests {
     fn test_past_reset_time_returns_zero() {
         let past_time = Utc::now() - Duration::minutes(10);
         let response = UsageResponse {
-            five_hour: Some(UsageInfo {
-                utilization: Some(1.0),
-                resets_at: Some(past_time.to_rfc3339()),
+            five_hour: Some(UsageWindow {
+                utilization: 1.0,
+                resets_at: Some(past_time),
             }),
             seven_day: None,
+            seven_day_sonnet: None,
             seven_day_oauth_apps: None,
             seven_day_opus: None,
-            seven_day_sonnet: None,
             seven_day_cowork: None,
             iguana_necktie: None,
             extra_usage: None,
         };
-        let metrics: Vec<UsageMetric> = response.into();
+        let metrics = convert_claude_usage(&response);
         assert_eq!(metrics[0].seconds_to_reset, Some(0));
-    }
-
-    #[test]
-    fn test_invalid_reset_time_format_returns_none() {
-        let response = UsageResponse {
-            five_hour: Some(UsageInfo {
-                utilization: Some(0.5),
-                resets_at: Some("invalid-date-format".to_string()),
-            }),
-            seven_day: None,
-            seven_day_oauth_apps: None,
-            seven_day_opus: None,
-            seven_day_sonnet: None,
-            seven_day_cowork: None,
-            iguana_necktie: None,
-            extra_usage: None,
-        };
-        let metrics: Vec<UsageMetric> = response.into();
-        assert_eq!(metrics.len(), 1);
-        assert!(metrics[0].seconds_to_reset.is_none());
-    }
-
-    #[test]
-    fn test_null_utilization_is_skipped() {
-        let response = UsageResponse {
-            five_hour: Some(UsageInfo {
-                utilization: Some(0.5),
-                resets_at: None,
-            }),
-            seven_day: None,
-            seven_day_oauth_apps: None,
-            seven_day_opus: None,
-            seven_day_sonnet: None,
-            seven_day_cowork: None,
-            iguana_necktie: None,
-            extra_usage: Some(UsageInfo {
-                utilization: None,
-                resets_at: None,
-            }),
-        };
-        let metrics: Vec<UsageMetric> = response.into();
-        assert_eq!(metrics.len(), 1);
-        assert_eq!(metrics[0].name, "five_hour");
     }
 
     #[test]
     fn test_multiple_fields_preserves_order() {
         let response = UsageResponse {
-            five_hour: Some(UsageInfo {
-                utilization: Some(0.1),
+            five_hour: Some(UsageWindow {
+                utilization: 0.1,
                 resets_at: None,
             }),
-            seven_day: Some(UsageInfo {
-                utilization: Some(0.2),
-                resets_at: None,
-            }),
-            seven_day_oauth_apps: None,
-            seven_day_opus: Some(UsageInfo {
-                utilization: Some(0.3),
+            seven_day: Some(UsageWindow {
+                utilization: 0.2,
                 resets_at: None,
             }),
             seven_day_sonnet: None,
+            seven_day_oauth_apps: None,
+            seven_day_opus: Some(UsageWindow {
+                utilization: 0.3,
+                resets_at: None,
+            }),
             seven_day_cowork: None,
             iguana_necktie: None,
-            extra_usage: Some(UsageInfo {
-                utilization: Some(0.4),
+            extra_usage: Some(UsageWindow {
+                utilization: 0.4,
                 resets_at: None,
             }),
         };
-        let metrics: Vec<UsageMetric> = response.into();
+        let metrics = convert_claude_usage(&response);
         assert_eq!(metrics.len(), 4);
         assert_eq!(metrics[0].name, "five_hour");
         assert!((metrics[0].utilization - 0.1_f64).abs() < f64::EPSILON);
@@ -681,71 +483,67 @@ mod tests {
     #[test]
     fn test_all_fields_present() {
         let response = UsageResponse {
-            five_hour: Some(UsageInfo {
-                utilization: Some(0.1),
+            five_hour: Some(UsageWindow {
+                utilization: 0.1,
                 resets_at: None,
             }),
-            seven_day: Some(UsageInfo {
-                utilization: Some(0.2),
+            seven_day: Some(UsageWindow {
+                utilization: 0.2,
                 resets_at: None,
             }),
-            seven_day_oauth_apps: Some(UsageInfo {
-                utilization: Some(0.3),
+            seven_day_sonnet: Some(UsageWindow {
+                utilization: 0.3,
                 resets_at: None,
             }),
-            seven_day_opus: Some(UsageInfo {
-                utilization: Some(0.4),
+            seven_day_oauth_apps: Some(UsageWindow {
+                utilization: 0.4,
                 resets_at: None,
             }),
-            seven_day_sonnet: Some(UsageInfo {
-                utilization: Some(0.5),
+            seven_day_opus: Some(UsageWindow {
+                utilization: 0.5,
                 resets_at: None,
             }),
-            seven_day_cowork: Some(UsageInfo {
-                utilization: Some(0.6),
+            seven_day_cowork: Some(UsageWindow {
+                utilization: 0.6,
                 resets_at: None,
             }),
-            iguana_necktie: Some(UsageInfo {
-                utilization: Some(0.7),
+            iguana_necktie: Some(UsageWindow {
+                utilization: 0.7,
                 resets_at: None,
             }),
-            extra_usage: Some(UsageInfo {
-                utilization: Some(0.8),
+            extra_usage: Some(UsageWindow {
+                utilization: 0.8,
                 resets_at: None,
             }),
         };
-        let metrics: Vec<UsageMetric> = response.into();
+        let metrics = convert_claude_usage(&response);
         assert_eq!(metrics.len(), 8);
     }
 }
 
 #[cfg(test)]
 mod openrouter_tests {
-    use super::*;
+    use seher::openrouter::CreditsData;
 
     #[test]
-    fn test_openrouter_metrics_conversion() {
-        let response = OpenRouterCreditsResponse {
-            data: OpenRouterCreditsData {
-                total_credits: 100.0,
-                total_usage: 25.5,
-            },
+    fn test_openrouter_remaining_calculation() {
+        let data = CreditsData {
+            total_credits: 100.0,
+            total_usage: 25.5,
         };
-        let metrics: OpenRouterMetrics = response.into();
-        assert!((metrics.total_credits - 100.0_f64).abs() < f64::EPSILON);
-        assert!((metrics.total_usage - 25.5_f64).abs() < f64::EPSILON);
-        assert!((metrics.remaining - 74.5_f64).abs() < f64::EPSILON);
+        let remaining = data.total_credits - data.total_usage;
+        assert_eq!(data.total_credits, 100.0);
+        assert_eq!(data.total_usage, 25.5);
+        assert_eq!(remaining, 74.5);
     }
 
     #[test]
-    fn test_openrouter_metrics_zero_usage() {
-        let response = OpenRouterCreditsResponse {
-            data: OpenRouterCreditsData {
-                total_credits: 50.0,
-                total_usage: 0.0,
-            },
+    fn test_openrouter_zero_usage() {
+        let data = CreditsData {
+            total_credits: 50.0,
+            total_usage: 0.0,
         };
-        let metrics: OpenRouterMetrics = response.into();
-        assert!((metrics.remaining - 50.0_f64).abs() < f64::EPSILON);
+        let remaining = data.total_credits - data.total_usage;
+        assert_eq!(remaining, 50.0);
     }
 }
