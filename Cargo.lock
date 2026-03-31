@@ -2018,9 +2018,9 @@ dependencies = [
 
 [[package]]
 name = "sehercode"
-version = "0.0.27"
+version = "0.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6dcc57358a7a528654b28a4ed8fd8a27127e5d9a4d7e5ee2598dc9a058e5af1"
+checksum = "32bb37ed3fb2b68d024a4e8970305ba393c986f805cda6e60d9a30c2d72a0b37"
 dependencies = [
  "axum",
  "base64",
