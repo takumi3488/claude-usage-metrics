@@ -38,7 +38,7 @@ fn convert_claude_usage(response: &seher::UsageResponse) -> Vec<UsageMetric> {
                 .map(|reset_time| (reset_time - now).num_seconds().max(0));
             UsageMetric {
                 name: name.to_string(),
-                utilization: window.utilization,
+                utilization: window.utilization.unwrap_or(0.0),
                 seconds_to_reset,
             }
         })
