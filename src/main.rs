@@ -38,7 +38,7 @@ fn convert_claude_usage(response: &seher::UsageResponse) -> Vec<UsageMetric> {
                 .map(|reset_time| (reset_time - now).num_seconds().max(0));
             UsageMetric {
                 name: name.to_string(),
-                utilization: window.utilization,
+                utilization: window.utilization.unwrap_or(0.0),
                 seconds_to_reset,
             }
         })
@@ -379,7 +379,7 @@ mod tests {
     fn test_single_field_with_no_reset_time() {
         let response = UsageResponse {
             five_hour: Some(UsageWindow {
-                utilization: 0.5,
+                utilization: Some(0.5),
                 resets_at: None,
             }),
             seven_day: None,
@@ -402,7 +402,7 @@ mod tests {
         let future_time = Utc::now() + Duration::seconds(1800);
         let response = UsageResponse {
             five_hour: Some(UsageWindow {
-                utilization: 0.75,
+                utilization: Some(0.75),
                 resets_at: Some(future_time),
             }),
             seven_day: None,
@@ -429,7 +429,7 @@ mod tests {
         let past_time = Utc::now() - Duration::minutes(10);
         let response = UsageResponse {
             five_hour: Some(UsageWindow {
-                utilization: 1.0,
+                utilization: Some(1.0),
                 resets_at: Some(past_time),
             }),
             seven_day: None,
@@ -448,23 +448,23 @@ mod tests {
     fn test_multiple_fields_preserves_order() {
         let response = UsageResponse {
             five_hour: Some(UsageWindow {
-                utilization: 0.1,
+                utilization: Some(0.1),
                 resets_at: None,
             }),
             seven_day: Some(UsageWindow {
-                utilization: 0.2,
+                utilization: Some(0.2),
                 resets_at: None,
             }),
             seven_day_sonnet: None,
             seven_day_oauth_apps: None,
             seven_day_opus: Some(UsageWindow {
-                utilization: 0.3,
+                utilization: Some(0.3),
                 resets_at: None,
             }),
             seven_day_cowork: None,
             iguana_necktie: None,
             extra_usage: Some(UsageWindow {
-                utilization: 0.4,
+                utilization: Some(0.4),
                 resets_at: None,
             }),
         };
@@ -484,35 +484,35 @@ mod tests {
     fn test_all_fields_present() {
         let response = UsageResponse {
             five_hour: Some(UsageWindow {
-                utilization: 0.1,
+                utilization: Some(0.1),
                 resets_at: None,
             }),
             seven_day: Some(UsageWindow {
-                utilization: 0.2,
+                utilization: Some(0.2),
                 resets_at: None,
             }),
             seven_day_sonnet: Some(UsageWindow {
-                utilization: 0.3,
+                utilization: Some(0.3),
                 resets_at: None,
             }),
             seven_day_oauth_apps: Some(UsageWindow {
-                utilization: 0.4,
+                utilization: Some(0.4),
                 resets_at: None,
             }),
             seven_day_opus: Some(UsageWindow {
-                utilization: 0.5,
+                utilization: Some(0.5),
                 resets_at: None,
             }),
             seven_day_cowork: Some(UsageWindow {
-                utilization: 0.6,
+                utilization: Some(0.6),
                 resets_at: None,
             }),
             iguana_necktie: Some(UsageWindow {
-                utilization: 0.7,
+                utilization: Some(0.7),
                 resets_at: None,
             }),
             extra_usage: Some(UsageWindow {
-                utilization: 0.8,
+                utilization: Some(0.8),
                 resets_at: None,
             }),
         };

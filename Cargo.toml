@@ -21,7 +21,7 @@ opentelemetry_sdk = { version = "0.31.0", features = [
   "rt-tokio",
 ] }
 prost = "0.14"
-seher = { version = "=0.0.27", package = "sehercode" }
+seher = { version = "=0.0.29", package = "sehercode" }
 tokio = { version = "1.48.0", features = ["rt-multi-thread", "macros"] }
 tonic = "0.14"
 tonic-prost = "0.14"
