@@ -2279,9 +2279,9 @@ dependencies = [
 
 [[package]]
 name = "sehercode"
-version = "0.0.29"
+version = "0.0.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87e15c19460ef6d5fa07f5549c3d26eb82f104b57e64fd78f86d7919b3ed2d65"
+checksum = "84b0b1bef1beeb32a4aada32cf72f94aaf07fd756dd921a8c4f589e37c4cd3cb"
 dependencies = [
  "aes",
  "aes-gcm",
