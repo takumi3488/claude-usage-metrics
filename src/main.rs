@@ -2,7 +2,7 @@ mod proto;
 
 use anyhow::Context;
 use chrono::Utc;
-use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
+use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::{MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{Resource, metrics::SdkMeterProvider, trace::SdkTracerProvider};
 use proto::cookiejar::v1::{GetCookiesRequest, cookie_service_client::CookieServiceClient};
@@ -92,8 +92,6 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
     global::set_tracer_provider(tracer_provider.clone());
 
     // Initialize tracing subscriber
-    let tracer = tracer_provider.tracer("claude-usage-metrics");
-    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .with_level(true)
@@ -101,7 +99,6 @@ fn init_telemetry() -> Result<TelemetryProviders, anyhow::Error> {
         .with_line_number(true);
 
     tracing_subscriber::registry()
-        .with(telemetry)
         .with(fmt_layer)
         .with(EnvFilter::from_default_env())
         .init();

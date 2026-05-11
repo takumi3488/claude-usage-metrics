@@ -6,16 +6,16 @@ version = "0.1.0"
 [dependencies]
 anyhow = "1.0.100"
 chrono = "0.4.42"
-opentelemetry = { version = "0.31.0", default-features = false, features = [
+opentelemetry = { version = "0.32.0", default-features = false, features = [
   "trace",
   "metrics",
 ] }
-opentelemetry-otlp = { version = "0.31.0", features = [
+opentelemetry-otlp = { version = "0.32.0", features = [
   "trace",
   "metrics",
   "grpc-tonic",
 ] }
-opentelemetry_sdk = { version = "0.31.0", features = [
+opentelemetry_sdk = { version = "0.32.0", features = [
   "trace",
   "metrics",
   "rt-tokio",
@@ -26,7 +26,6 @@ tokio = { version = "1.48.0", features = ["rt-multi-thread", "macros"] }
 tonic = "0.14"
 tonic-prost = "0.14"
 tracing = "0.1.44"
-tracing-opentelemetry = "0.32"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [lints.clippy]
