@@ -36,7 +36,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
   cp /app/target/release/claude-usage-metrics /tmp/claude-usage-metrics
 
 # Runtime stage: Create minimal production image with static binary
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:a9329520abc449e3b14d5bc3a6ffae065bdde0f02667fa10880c49b35c109fd1
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 WORKDIR /app
 
