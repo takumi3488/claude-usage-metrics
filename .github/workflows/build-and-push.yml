@@ -19,7 +19,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
 
       - name: Run tests
-        uses: takumi3488/mygha/rust/test@894e6c7bafde3f777167728ee9aadf8c9c0d6203 # main
+        uses: takumi3488/mygha/rust/test@4ac0dcfd7f0b0f881b535a4e7aeb111e316e1fe6 # main
 
   build-and-release:
     runs-on: ubuntu-latest
