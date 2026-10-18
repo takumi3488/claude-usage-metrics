@@ -15,5 +15,5 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
 
       - name: Run tests
-        uses: takumi3488/mygha/rust/test@2142eec263e8a006b8219c7334ed19cc6af26436 # main
+        uses: takumi3488/mygha/rust/test@54f5b943621705a9fed7294e36492fe20c6d187a # main
 
