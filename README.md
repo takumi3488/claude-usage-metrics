@@ -120,6 +120,11 @@ View metrics in your OTLP backend. For example, with Jaeger:
 2. Open the Jaeger UI at http://localhost:16686
 3. Select the service name configured in `OTEL_SERVICE_NAME`
 
+## Support
+
+If you find claude-usage-metrics useful, consider [sponsoring takumi3488](https://github.com/sponsors/takumi3488)
+to support its development and maintenance.
+
 ## License
 
 MIT
